@@ -106,6 +106,29 @@ td.addr-cell{max-width:220px;white-space:normal;line-height:1.3}
 .summary-card ul{margin-top:12px;list-style:none}
 .summary-card li{font-size:11.5px;padding:4px 0;border-top:1px solid var(--border);color:var(--text2)}
 .summary-card li:first-child{border-top:none}
+/* SUMMARY SPREADSHEET */
+#overlay-home{padding:0;overflow:hidden}
+.sum-wrap{display:flex;flex-direction:column;height:100%}
+.sum-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border)}
+.sum-title{font-size:13px;font-weight:600}
+.sum-count{font-size:11.5px;color:var(--text2);white-space:nowrap}
+.sum-chips{display:flex;gap:6px;flex-wrap:wrap}
+.sum-chip{font-size:11px;font-weight:600;padding:3px 10px;border-radius:12px;border:1px solid var(--border2);background:#fff;color:var(--text3);cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-family:inherit}
+.sum-chip .dot{width:8px;height:8px;border-radius:50%;opacity:.45}
+.sum-chip .n{font-weight:700}
+.sum-chip.on{color:var(--text);border-color:var(--text3)}
+.sum-chip.on .dot{opacity:1}
+.sum-tools{display:flex;gap:8px;margin-left:auto;align-items:center}
+.sum-tools input{padding:5px 9px;border:1px solid var(--border2);border-radius:6px;font-size:12px;min-width:240px;font-family:inherit}
+.sum-scroll{flex:1;overflow:auto;background:var(--surface)}
+#sum-table th{cursor:pointer;user-select:none;background:var(--surface)}
+#sum-table th:hover{color:var(--text)}
+#sum-table td{font-size:12px}
+.stage-badge{display:inline-flex;align-items:center;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;white-space:nowrap}
+.sum-status{font-weight:600;color:var(--green);white-space:nowrap}
+.sum-cmt{max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px;color:var(--text2)}
+.sum-num{text-align:right;white-space:nowrap}
+#sum-table th.sum-num{text-align:right}
 .qs-wrap{max-width:640px;margin:0 auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:28px}
 .qs-wrap h2{font-size:16px;margin-bottom:4px}
 .qs-wrap p.hint{font-size:12px;color:var(--text2);margin-bottom:20px}
@@ -203,7 +226,38 @@ td.addr-cell{max-width:220px;white-space:normal;line-height:1.3}
 
 <!-- SUMMARY -->
 <div id="overlay-home">
-  <div class="summary-grid" id="summary-grid"></div>
+  <div class="sum-wrap">
+    <div class="sum-head">
+      <div class="sum-title">All properties</div>
+      <span class="sum-count" id="sum-count"></span>
+      <div class="sum-chips" id="sum-chips"></div>
+      <div class="sum-tools">
+        <input type="text" id="sum-search" placeholder="Search site, agent, status, comment" oninput="renderSummary()">
+        <button type="button" class="dp-btn" onclick="sumExportCsv()">Export CSV</button>
+      </div>
+    </div>
+    <div class="sum-scroll">
+      <table id="sum-table">
+        <thead>
+          <tr id="sum-thead">
+            <th data-sort="site" onclick="sumSortBy('site')">Site<span class="sort-ind"></span></th>
+            <th data-sort="stage" onclick="sumSortBy('stage')">Stage<span class="sort-ind"></span></th>
+            <th data-sort="status" onclick="sumSortBy('status')">Status<span class="sort-ind"></span></th>
+            <th data-sort="comment" onclick="sumSortBy('comment')">Comment<span class="sort-ind"></span></th>
+            <th data-sort="agent" onclick="sumSortBy('agent')">Agent<span class="sort-ind"></span></th>
+            <th class="sum-num" data-sort="size" onclick="sumSortBy('size')">Size<span class="sort-ind"></span></th>
+            <th class="sum-num" data-sort="rent" onclick="sumSortBy('rent')">Rent p.a.<span class="sort-ind"></span></th>
+            <th class="sum-num" data-sort="psf" onclick="sumSortBy('psf')">£ / sqft<span class="sort-ind"></span></th>
+            <th data-sort="score" onclick="sumSortBy('score')">Score<span class="sort-ind"></span></th>
+            <th data-sort="source" onclick="sumSortBy('source')">Source<span class="sort-ind"></span></th>
+            <th data-sort="added" onclick="sumSortBy('added')">Added<span class="sort-ind"></span></th>
+          </tr>
+        </thead>
+        <tbody id="sum-tbody"></tbody>
+      </table>
+      <div id="sum-empty" class="empty" style="display:none">No properties match. Rejected and Archived are hidden by default, use the stage buttons above to show them.</div>
+    </div>
+  </div>
 </div>
 
 <!-- QUICK SEARCH -->
@@ -474,18 +528,114 @@ function switchStageView(view){
   }
 }
 
+// ───────── SUMMARY (spreadsheet view) ─────────
+var SUM_ORDER=['viewing','progressing','offered','hots_agreed','lease_agreed','rejected','archived'];
+var SUM_COLORS={viewing:'#7d7c77',progressing:'#185FA5',offered:'#854F0B',hots_agreed:'#639922',lease_agreed:'#3B6D11',rejected:'#A32D2D',archived:'#6B6A65'};
+var sumStages={viewing:true,progressing:true,offered:true,hots_agreed:true,lease_agreed:true,rejected:false,archived:false};
+var sumSort={key:'stage',dir:1};
+
+function sumEsc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function sumTitle(l){return l.name||l.addr||'';}
+function sumPsf(l){var r=Number(l.rent),s=Number(l.size);return (r>0&&s>0)?r/s:null;}
+function sumRank(l){var r=SUM_ORDER.indexOf(l.status);return r<0?99:r;}
+function sumNum(v){return (v!=null&&v!==''&&Number(v)>0)?Number(v):null;}
+
+var SUM_SORTERS={
+  stage:sumRank,
+  site:function(l){return sumTitle(l).toLowerCase();},
+  status:function(l){return (l.sub_status||'').toLowerCase();},
+  comment:function(l){return (l.comment||'').toLowerCase();},
+  agent:function(l){return (l.agent||'').toLowerCase();},
+  size:function(l){return sumNum(l.size);},
+  rent:function(l){return sumNum(l.rent);},
+  psf:sumPsf,
+  score:function(l){return (l.combined!=null&&!isNaN(l.combined))?Number(l.combined):null;},
+  source:function(l){return (SOURCE_LABELS[l.source]||l.source||'').toLowerCase();},
+  added:function(l){return l.created_at||null;}
+};
+
+function sumIsBlank(v){return v===null||v===undefined||v===''||(typeof v==='number'&&isNaN(v));}
+
+function sumRows(){
+  var q=(document.getElementById('sum-search').value||'').toLowerCase().trim();
+  var rows=sites.filter(function(l){
+    if(sumStages[l.status]===false)return false;
+    if(q&&[l.name,l.addr,l.agent,l.sub_status,l.comment,l.notes].join(' ').toLowerCase().indexOf(q)===-1)return false;
+    return true;
+  });
+  var get=SUM_SORTERS[sumSort.key]||SUM_SORTERS.stage;
+  rows.sort(function(a,b){
+    var x=get(a), y=get(b), xb=sumIsBlank(x), yb=sumIsBlank(y);
+    if(xb&&yb)return sumRank(a)-sumRank(b)||sumTitle(a).localeCompare(sumTitle(b));
+    if(xb)return 1;            // blanks always sort to the bottom
+    if(yb)return -1;
+    var c=(x<y?-1:(x>y?1:0))*sumSort.dir;
+    return c||sumRank(a)-sumRank(b)||sumTitle(a).localeCompare(sumTitle(b));
+  });
+  return rows;
+}
+
+function sumRowHtml(l){
+  var srcClass=l.source==='on_market'?'onmarket':l.source==='quick_search'?'quicksearch':'manual';
+  var c=SUM_COLORS[l.status]||'#777777';
+  var psf=sumPsf(l);
+  var dash='<span class="poa">-</span>';
+  return '<tr onclick="showDetail(\''+l.id+'\')">'
+    +'<td class="addr-cell"><div class="a1">'+sumEsc(sumTitle(l)||'-')+'</div>'+(l.name&&l.addr?'<div class="a2">'+sumEsc(l.addr)+'</div>':'')+'</td>'
+    +'<td><span class="stage-badge" style="background:'+c+'1f;color:'+c+'">'+sumEsc(STAGE_LABELS[l.status]||l.status||'-')+'</span></td>'
+    +'<td class="sum-status">'+(l.sub_status?sumEsc(l.sub_status):dash)+'</td>'
+    +'<td><div class="sum-cmt" title="'+sumEsc(l.comment)+'">'+(l.comment?sumEsc(l.comment):dash)+'</div></td>'
+    +'<td><div class="a2" style="font-size:11.5px">'+(l.agent?sumEsc(l.agent):dash)+'</div></td>'
+    +'<td class="sum-num">'+(sumNum(l.size)?Number(l.size).toLocaleString('en-GB')+' sqft':dash)+'</td>'
+    +'<td class="sum-num">'+(sumNum(l.rent)?'£'+Number(l.rent).toLocaleString('en-GB'):dash)+'</td>'
+    +'<td class="sum-num">'+(psf!==null?'£'+Math.round(psf).toLocaleString('en-GB'):dash)+'</td>'
+    +'<td>'+(l.combined!=null?'<span class="sp '+scoreClass(l.combined)+'">'+Number(l.combined).toFixed(1)+'</span>':'<span class="sp sn">-</span>')+'</td>'
+    +'<td><span class="src-badge '+srcClass+'">'+sumEsc(SOURCE_LABELS[l.source]||l.source||'-')+'</span></td>'
+    +'<td class="date-cell">'+(l.created_at?new Date(l.created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short'}):'-')+'</td>'
+    +'</tr>';
+}
+
 function renderSummary(){
-  var grid=document.getElementById('summary-grid');
-  var order=['viewing','progressing','offered','hots_agreed','lease_agreed','rejected','archived'];
-  grid.innerHTML=order.map(function(s){
-    var items=sites.filter(function(x){return x.status===s;});
-    var preview=items.slice(0,5).map(function(x){return '<li>'+(x.addr||'—').replace(/</g,'&lt;')+'</li>';}).join('');
-    return '<div class="summary-card" onclick="switchStageView(\''+s+'\')">'
-      +'<div class="sc-count">'+items.length+'</div>'
-      +'<div class="sc-label">'+STAGE_LABELS[s]+'</div>'
-      +'<ul>'+(preview||'<li style="color:#bbb">No items</li>')+'</ul>'
-      +'</div>';
+  document.getElementById('sum-chips').innerHTML=SUM_ORDER.map(function(s){
+    var n=sites.filter(function(x){return x.status===s;}).length;
+    return '<button type="button" class="sum-chip'+(sumStages[s]?' on':'')+'" onclick="sumToggleStage(\''+s+'\')">'
+      +'<span class="dot" style="background:'+SUM_COLORS[s]+'"></span>'+STAGE_LABELS[s]+' <span class="n">'+n+'</span></button>';
   }).join('');
+  var rows=sumRows();
+  document.getElementById('sum-tbody').innerHTML=rows.map(sumRowHtml).join('');
+  document.getElementById('sum-empty').style.display=rows.length?'none':'block';
+  document.getElementById('sum-count').textContent=rows.length+' of '+sites.length+' properties';
+  document.querySelectorAll('#sum-thead th').forEach(function(th){
+    var ind=th.querySelector('.sort-ind');
+    if(ind)ind.textContent=(th.getAttribute('data-sort')===sumSort.key)?(sumSort.dir===1?' ▲':' ▼'):'';
+  });
+}
+
+function sumToggleStage(s){sumStages[s]=!sumStages[s];renderSummary();}
+function sumSortBy(key){
+  if(sumSort.key===key)sumSort.dir=-sumSort.dir;
+  else sumSort={key:key,dir:(key==='score'||key==='rent'||key==='size'||key==='psf'||key==='added')?-1:1};
+  renderSummary();
+}
+
+function sumCsvCell(v){return '"'+String(v==null?'':v).replace(/"/g,'""')+'"';}
+function sumExportCsv(){
+  var rows=sumRows();
+  var head=['Name','Address','Stage','Status','Comment','Agent','Agent phone','Size (sqft)','Rent (GBP p.a.)','GBP per sqft','Score','Source','Added','Listing URL'];
+  var lines=[head.map(sumCsvCell).join(',')];
+  rows.forEach(function(l){
+    var psf=sumPsf(l);
+    lines.push([l.name,l.addr,STAGE_LABELS[l.status]||l.status,l.sub_status,l.comment,l.agent,l.agent_phone,
+      sumNum(l.size)||'',sumNum(l.rent)||'',psf!==null?Math.round(psf):'',
+      l.combined!=null?Number(l.combined).toFixed(1):'',SOURCE_LABELS[l.source]||l.source,
+      l.created_at?new Date(l.created_at).toLocaleDateString('en-GB'):'',l.url].map(sumCsvCell).join(','));
+  });
+  var d=new Date();
+  var stamp=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  var a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([lines.join('\n')],{type:'text/csv'}));
+  a.download='scratch-pipeline-'+stamp+'.csv';
+  document.body.appendChild(a);a.click();a.remove();
 }
 
 function filtered(){
@@ -1389,6 +1539,7 @@ async function submitAddProperty(){
 }
 
 loadSites();
+switchStageView('home');
 
 // ───────── MAP TAB ─────────
 var sitesMapObj=null, sitesMapMarkers={};
